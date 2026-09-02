@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Hunter Agent — Toshal Zambare</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <header>
+        <div class="logo-area">
+            <h1>🚀 Job Hunter Agent</h1>
+            <p>Automated Job Discovery & Prioritization System</p>
+        </div>
+        <div class="action-buttons">
+            <button id="trigger-scrape-btn" onclick="triggerScrape()">
+                <span>🔍 Find New Jobs Now</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-card">
+                <span class="label">Total Opportunities</span>
+                <span class="value" id="stat-total">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="label">New Jobs</span>
+                <span class="value" id="stat-new">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="label">Applied Jobs</span>
+                <span class="value" id="stat-applied" style="color: var(--success)">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="label">Internships</span>
+                <span class="value" id="stat-internships" style="color: var(--warning)">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="label">Full Time Roles</span>
+                <span class="value" id="stat-fulltimes" style="color: #2563eb">0</span>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+            <div class="filter-group">
+                <label for="type-filter">Type:</label>
+                <select id="type-filter" onchange="loadJobs()">
+                    <option value="all">All Types</option>
+                    <option value="Full Time">Full Time</option>
+                    <option value="Internship">Internship</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="status-filter">Status:</label>
+                <select id="status-filter" onchange="loadJobs()">
+                    <option value="new">New / Unapplied</option>
+                    <option value="applied">Applied</option>
+                    <option value="saved">Saved</option>
+                    <option value="all">All Statuses</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="search-input">Search:</label>
+                <input type="text" id="search-input" placeholder="Role, company, skill..." onkeyup="filterJobsLocal()">
+            </div>
+        </div>
+
+        <!-- Job List -->
+        <div id="job-list" class="job-list">
+            <div class="loading-spinner">Loading job listings...</div>
+        </div>
+    </div>
+
+    <script>
+        let allLoadedJobs = [];
+
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                if (data.success) {
+                    const s = data.stats;
+                    document.getElementById('stat-total').innerText = s.total_found;
+                    document.getElementById('stat-new').innerText = s.new_jobs;
+                    document.getElementById('stat-applied').innerText = s.applied_jobs;
+                    document.getElementById('stat-internships').innerText = s.internships;
+                    document.getElementById('stat-fulltimes').innerText = s.full_times;
+
+                    if (s.is_scraping) {
+                        document.getElementById('trigger-scrape-btn').innerText = "⏳ Searching for jobs...";
+                        document.getElementById('trigger-scrape-btn').disabled = true;
+                    } else {
+                        document.getElementById('trigger-scrape-btn').innerText = "🔍 Find New Jobs Now";
+                        document.getElementById('trigger-scrape-btn').disabled = false;
+                    }
+                }
+            } catch (err) {
+                console.error("Error fetching stats:", err);
+            }
+        }
+
+        async function loadJobs() {
+            const type = document.getElementById('type-filter').value;
+            const status = document.getElementById('status-filter').value;
+
+            document.getElementById('job-list').innerHTML = '<div class="loading-spinner">Fetching fresh opportunities...</div>';
+
+            try {
+                const res = await fetch(`/api/jobs?type=${type}&status=${status}`);
+                const data = await res.json();
+
+                if (data.success) {
+                    allLoadedJobs = data.jobs;
+                    renderJobs(allLoadedJobs);
+                }
+            } catch (err) {
+                document.getElementById('job-list').innerHTML = '<div class="loading-spinner" style="color: var(--danger)">Failed to load jobs.</div>';
+            }
+        }
+
+        function renderJobs(jobs) {
+            const container = document.getElementById('job-list');
+
+            if (!jobs || jobs.length === 0) {
+                container.innerHTML = '<div class="loading-spinner">No jobs found matching selected criteria. Try running the scraper or clearing filters.</div>';
+                return;
+            }
+
+            container.innerHTML = jobs.map(job => {
+                const locClass = `location-${job.location_priority}`;
+                const typeClass = job.job_type === 'Internship' ? 'internship' : 'fulltime';
+                const locName = job.location || 'India';
+
+                return `
+                    <div class="job-card location-${job.location_priority}">
+                        <div class="job-main">
+                            <h3>${escapeHtml(job.title)}</h3>
+                            <div class="company-line">
+                                <span>🏢 <strong>${escapeHtml(job.company)}</strong></span>
+                                <span>📍 ${escapeHtml(locName)}</span>
+                                <span>💰 ${escapeHtml(job.salary || 'Not Disclosed')}</span>
+                            </div>
+                            <div class="tags">
+                                <span class="tag ${locClass}">Location Priority ${job.location_priority}</span>
+                                <span class="tag ${typeClass}">${escapeHtml(job.job_type)}</span>
+                                <span class="tag">${escapeHtml(job.platform)}</span>
+                            </div>
+                        </div>
+
+                        <div class="job-actions">
+                            <span class="match-badge">${job.match_score}% Match</span>
+                            <a href="${job.url}" target="_blank" class="btn-apply" onclick="markApplied('${job.id}')">
+                                Apply Now ↗
+                            </a>
+                            ${job.status === 'applied' ? 
+                                '<span style="color: var(--success); font-weight: bold;">✓ Applied</span>' :
+                                `<button class="btn-mark" onclick="markApplied('${job.id}')">Mark Applied</button>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function filterJobsLocal() {
+            const query = document.getElementById('search-input').value.toLowerCase();
+            const filtered = allLoadedJobs.filter(j => 
+                j.title.toLowerCase().includes(query) || 
+                j.company.toLowerCase().includes(query) || 
+                (j.location && j.location.toLowerCase().includes(query))
+            );
+            renderJobs(filtered);
+        }
+
+        async function markApplied(jobId) {
+            try {
+                await fetch(`/api/jobs/${jobId}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'applied' })
+                });
+                fetchStats();
+            } catch (err) {
+                console.error("Error marking status:", err);
+            }
+        }
+
+        async function triggerScrape() {
+            try {
+                document.getElementById('trigger-scrape-btn').innerText = "⏳ Scraper started...";
+                document.getElementById('trigger-scrape-btn').disabled = true;
+
+                const res = await fetch('/api/trigger-scrape', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message);
+
+                setTimeout(() => {
+                    fetchStats();
+                    loadJobs();
+                }, 4000);
+            } catch (err) {
+                alert("Failed to start scraper.");
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        }
+
+        // Initial setup
+        fetchStats();
+        loadJobs();
+        setInterval(fetchStats, 10000);
+    </script>
+</body>
+</html>
